@@ -1,0 +1,7 @@
+# Shell scripts are executed via POSIX shebangs inside the Docker image;
+# CRLF endings break exec ("no such file or directory"). Keep them LF
+# even on Windows checkouts.
+*.sh text eol=lf
+
+# Dockerfiles tolerate CRLF, but normalize for consistency.
+Dockerfile text eol=lf
