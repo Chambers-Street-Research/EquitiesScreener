@@ -1,0 +1,29 @@
+# Host build directories
+build/
+cmake-build-*/
+out/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# VCS & IDE
+.git/
+.gitignore
+.idea/
+.vscode/
+
+# Screener-generated output
+*_screened.csv
+
+# Docker's own files
+Dockerfile
+.dockerignore
+
+# Docs
+README.md
+
+# macOS
+.DS_Store
