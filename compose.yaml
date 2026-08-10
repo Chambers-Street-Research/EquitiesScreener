@@ -1,0 +1,18 @@
+services:
+  screener:
+    build: .
+    image: equities-screener
+    container_name: equities-screener
+    # Keep the container alive for interactive use: `docker compose up` drops
+    # you into a bash shell in /work (see the entrypoint's shell pass-through).
+    # Run the screener from inside that shell with `EquitiesScreener`.
+    command: ["bash"]
+    stdin_open: true   # -i
+    tty: true          # -t
+    # A CLI, not a daemon: never auto-restart in the background. The container
+    # exits when you exit the shell; stop/remove it with `docker compose down`.
+    restart: "no"
+    volumes:
+      # The host's WorkingData/ folder is the container's /work: everything the
+      # screener reads and writes lands here and persists between runs.
+      - ./WorkingData:/work
