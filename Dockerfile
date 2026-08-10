@@ -5,8 +5,7 @@
 # ------------------------------------------------------------
 #  Stage 1: builder
 # ------------------------------------------------------------
-# Base image pinned by digest (2026-08-10); Dependabot keeps it current.
-FROM gcc:16@sha256:a612916cfba059f0b531f7aebddca462bf23a6d7a9c6681ca3b110f7721d6d05 AS builder
+FROM gcc:16 AS builder
 
 # The gcc image ships the toolchain but no build generator or vcpkg deps.
 RUN apt-get update \
@@ -73,8 +72,7 @@ RUN ./build/equities_tests \
 # ------------------------------------------------------------
 #  Stage 3: runtime
 # ------------------------------------------------------------
-# Base image pinned by digest (2026-08-10); Dependabot keeps it current.
-FROM debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258 AS runtime
+FROM debian:trixie-slim AS runtime
 
 # Unprivileged by default;
 # user, so CSVs written into a bind-mounted directory stay editable on the host.
