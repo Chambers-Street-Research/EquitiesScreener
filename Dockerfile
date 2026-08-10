@@ -50,8 +50,10 @@ COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh
 
 # Baked-in defaults so `docker run <image>` does something useful with no
-# volumes attached. A bind mount over /work replaces them with the host's copies.
-COPY --chown=screener:screener screener.ini sample.csv /work/
+# volumes attached. They live OUTSIDE /work so a bind mount over /work (the
+# container's data directory) never hides them; the entrypoint seeds /work
+# from here only when files are missing.
+COPY --chown=screener:screener WorkingData/screener.ini WorkingData/sample.csv /opt/equities-screener/
 
 # Every path the screener reads or writes is relative to the working directory,
 # so /work is the single mount point that matters.
