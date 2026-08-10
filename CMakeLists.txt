@@ -31,3 +31,17 @@ target_compile_features(equities_core PUBLIC cxx_std_23)
 
 add_executable(EquitiesScreener main.cpp)
 target_link_libraries(EquitiesScreener PRIVATE equities_core)
+
+# ============================================================
+#  Compiler warnings: -Wall -Wextra (GCC/Clang), /W4 (MSVC)
+# ============================================================
+
+# PRIVATE on the library covers its own sources; the executable needs its
+# own copy because PRIVATE options do not propagate across the link.
+target_compile_options(equities_core PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra>
+        $<$<CXX_COMPILER_ID:MSVC>:/W4>)
+
+target_compile_options(EquitiesScreener PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra>
+        $<$<CXX_COMPILER_ID:MSVC>:/W4>)
