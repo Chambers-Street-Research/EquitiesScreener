@@ -31,3 +31,7 @@ Makefile
 
 # macOS
 .DS_Store
+
+# vcpkg artifacts (manifest mode installs into the build tree)
+vcpkg_installed/
+vcpkg-manifest-install.log

@@ -18,6 +18,14 @@ Makefile
 # Screener-generated output
 *_screened.csv
 
+# Secrets & local credentials - never send to the Docker daemon/build context
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.p8
+
 # Docker's own files
 Dockerfile
 .dockerignore
