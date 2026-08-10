@@ -1,0 +1,8 @@
+{
+  "name": "equities-screener",
+  "version": "1.0.0",
+  "builtin-baseline": "f29188ab71f34a184e1868147bea6e519d9d74e4",
+  "dependencies": [
+    "gtest"
+  ]
+}

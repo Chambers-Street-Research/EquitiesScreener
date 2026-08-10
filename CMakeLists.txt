@@ -36,12 +36,35 @@ target_link_libraries(EquitiesScreener PRIVATE equities_core)
 #  Compiler warnings: -Wall -Wextra (GCC/Clang), /W4 (MSVC)
 # ============================================================
 
-# PRIVATE on the library covers its own sources; the executable needs its
+# PRIVATE on the library covers its own sources; executables need their
 # own copy because PRIVATE options do not propagate across the link.
-target_compile_options(equities_core PRIVATE
-        $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra>
-        $<$<CXX_COMPILER_ID:MSVC>:/W4>)
+function(enable_warnings target)
+    target_compile_options(${target} PRIVATE
+            $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra>
+            $<$<CXX_COMPILER_ID:MSVC>:/W4>)
+endfunction()
 
-target_compile_options(EquitiesScreener PRIVATE
-        $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra>
-        $<$<CXX_COMPILER_ID:MSVC>:/W4>)
+enable_warnings(equities_core)
+enable_warnings(EquitiesScreener)
+
+# ============================================================
+#  Tests - GoogleTest via vcpkg (see vcpkg.json)
+# ============================================================
+
+include(CTest)
+if(BUILD_TESTING)
+    if(NOT CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg")
+        message(FATAL_ERROR
+            "BUILD_TESTING is ON but no vcpkg toolchain was set. "
+            "GoogleTest comes from vcpkg - configure with "
+            "-DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake "
+            "(see README 'Tests'), or pass -DBUILD_TESTING=OFF to skip tests.")
+    endif()
+    find_package(GTest CONFIG REQUIRED)
+
+    add_executable(equities_tests tests/config_test.cpp)
+    target_link_libraries(equities_tests PRIVATE equities_core GTest::gtest_main)
+    enable_warnings(equities_tests)
+
+    add_test(NAME equities_tests COMMAND equities_tests)
+endif()

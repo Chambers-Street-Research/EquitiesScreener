@@ -26,13 +26,15 @@ EquitiesScreener/
 │   └── Csv.cpp         # Parsing & formatting with C++23 ranges
 ├── config/
 │   ├── Config.h        # Settings-file model & INI parser API
-│   ├── Config.cpp      # INI parsing, metric names, output naming
-│   └── Config_test.cpp # Parser unit tests (no framework)
+│   └── Config.cpp      # INI parsing, metric names, output naming
+├── tests/
+│   └── config_test.cpp # GoogleTest suite for the INI parser (gtest via vcpkg)
 ├── main.cpp            # CLI — CSV in, filtered/sorted CSV out
 ├── WorkingData/        # Your working files (mounted into the Docker container)
 │   ├── screener.ini    #   Base config - run the tool with no args to try it
 │   └── sample.csv      #   7-ticker sample universe
 ├── compose.yaml        # Docker Compose: mounts WorkingData/ into the container
+├── vcpkg.json          # vcpkg manifest: gtest dependency
 ├── screener.ini.example  # Annotated settings-file template
 └── CMakeLists.txt
 ```
@@ -40,6 +42,8 @@ EquitiesScreener/
 ## Build
 
 Requires **CMake ≥ 3.20** and a **C++23**-capable compiler (GCC, Clang, or MSVC).
+Tests additionally require **vcpkg** (see [Tests](#tests)) — pass
+`-DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake` to CMake.
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -60,21 +64,41 @@ Or open the project directly in **CLion** — it will pick up `CMakeLists.txt` a
 
 ## Tests
 
-Minimal framework-free unit tests (plain asserts) for the settings-file parser:
+Unit tests are written with **GoogleTest**, pulled in via **vcpkg** manifest
+mode (`vcpkg.json`). The Docker build compiles and runs the same suites as a
+build gate; locally you need vcpkg + its CMake toolchain:
 
 ```bash
-cmake --build build --config Release
-./build/Release/EquitiesScreenerConfigTests.exe
+# one-time: install vcpkg (any directory)
+git clone https://github.com/microsoft/vcpkg
+./vcpkg/bootstrap-vcpkg.sh        # Windows: .\vcpkg\bootstrap-vcpkg.bat
+
+# configure with the vcpkg toolchain (installs gtest automatically)
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=<path-to-vcpkg>/scripts/buildsystems/vcpkg.cmake
+
+# build & run the tests
+cmake --build build --target equities_tests
+./build/equities_tests            # or: ctest --test-dir build --output-on-failure
 ```
 
-Exit code `0` means all assertions passed.
+> With a multi-config generator (e.g. Visual Studio), the binary lands under
+> `build/Release/equities_tests.exe` — build with `--config Release` and run
+> that path.
+
+Exit code `0` means all tests passed. `equities_tests` links gtest
+statically (a fat binary), so no gtest libraries are needed at runtime.
+
+In CI the same suites run as a dedicated Docker stage — see
+`.github/workflows/ci.yml`. `docker build --target test .` runs only the
+tests; the full image build runs them too, as a gate.
 
 ## Docker
 
 The container is designed to be used like a CLI: everything it reads and
 writes lives in the repo's `WorkingData/` folder, which Compose mounts into
 the container at `/work`. Edit files on your host, re-run — **no rebuilds**
-for data or config changes.
+for data or config changes. The image build also compiles and runs the
+GoogleTest suites (via vcpkg) as a gate — a failing test fails the build.
 
 ### Interactive shell (recommended)
 
