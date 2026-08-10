@@ -4,8 +4,11 @@ project(EquitiesScreener)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_executable(EquitiesScreener
-        main.cpp
+# ============================================================
+#  equities_core - all business logic, no entry point
+# ============================================================
+
+add_library(equities_core STATIC
         data/Equity.cpp
         data/Equity.h
         engine/Engine.cpp
@@ -15,16 +18,16 @@ add_executable(EquitiesScreener
         config/Config.cpp
         config/Config.h)
 
-target_include_directories(EquitiesScreener PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# PUBLIC: headers are included as "engine/Engine.h" etc., relative to the
+# project root, so anything linking equities_core inherits this search path.
+target_include_directories(equities_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-# Framework-free unit tests for the settings-file parser
-add_executable(EquitiesScreenerConfigTests
-        config/Config_test.cpp
-        data/Equity.cpp
-        data/Equity.h
-        engine/Engine.cpp
-        engine/Engine.h
-        config/Config.cpp
-        config/Config.h)
+# Consumers need C++23 too (<print>, std::expected in the public headers).
+target_compile_features(equities_core PUBLIC cxx_std_23)
 
-target_include_directories(EquitiesScreenerConfigTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# ============================================================
+#  Executables
+# ============================================================
+
+add_executable(EquitiesScreener main.cpp)
+target_link_libraries(EquitiesScreener PRIVATE equities_core)
