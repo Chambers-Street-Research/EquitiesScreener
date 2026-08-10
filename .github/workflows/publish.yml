@@ -1,0 +1,61 @@
+name: Publish image to GHCR
+
+# On a new commit to main: build the runtime image and push it to the GitHub
+# Container Registry (ghcr.io), tagged :latest plus a :sha-<commit> tag.
+on:
+  push:
+    branches: ["main"]
+
+# Least privilege: read the repo, write packages (GHCR push). No custom
+# secrets beyond the automatic GITHUB_TOKEN.
+permissions:
+  contents: read
+  packages: write      # push to ghcr.io
+
+# Never cancel: a push to main should always end with a published image.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and push runtime image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Build-only job: we never git-push, so don't leave the token in
+          # .git/config where a compromised step could exfiltrate it.
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # metadata-action lowercases the repo name (GHCR requires it) and
+      # emits the tag set: ghcr.io/<owner>/<repo>:latest, :sha-<commit-sha>.
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-
+
+      # Default target = the runtime stage. Once the vcpkg/test-stage
+      # Dockerfile (PR #17) is on main, the test stage also runs inside this
+      # build as a gate, so nothing broken reaches the registry.
+      - name: Build, test, and push
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
