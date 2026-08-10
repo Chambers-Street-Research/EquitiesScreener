@@ -50,12 +50,22 @@ jobs:
             type=raw,value=latest
             type=sha,prefix=sha-
 
-      # Default target = the runtime stage. Once the vcpkg/test-stage
-      # Dockerfile (PR #17) is on main, the test stage also runs inside this
-      # build as a gate, so nothing broken reaches the registry.
-      - name: Build, test, and push
+      # GATE: build the test stage and run the gtest suites before anything
+      # is pushed. The runtime stage does NOT depend on the test stage, so
+      # without this explicit step BuildKit would skip it entirely and a
+      # failing commit could still be published. Layers are exported so the
+      # push step below reuses them.
+      - name: Build and run tests (gate)
         uses: docker/build-push-action@v6
         with:
+          target: test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push runtime image
+        uses: docker/build-push-action@v6
+        with:
+          target: runtime
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
