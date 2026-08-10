@@ -1,13 +1,14 @@
 name: CI
 
-# Push to the default branch plus every pull request.
+# PR feedback ONLY - runs tests and builds the image for every pull request.
+# Pushes to main are handled by the publish workflow (publish.yml), which runs
+# the same test gate and ships the image; running CI here too would test and
+# build everything twice on every main commit.
 #
 # PR-RCE posture: `pull_request` runs untrusted PR code with NO repository
 # secrets and a read-only token (see permissions below), so a malicious PR
 # cannot exfiltrate secrets or write to the repo.
 on:
-  push:
-    branches: ["main"]
   pull_request:
 
 # Least privilege: this workflow only reads the repo - it never pushes back.
