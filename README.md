@@ -29,8 +29,10 @@ EquitiesScreener/
 │   ├── Config.cpp      # INI parsing, metric names, output naming
 │   └── Config_test.cpp # Parser unit tests (no framework)
 ├── main.cpp            # CLI — CSV in, filtered/sorted CSV out
-├── sample.csv          # 7-ticker sample universe
-├── screener.ini        # Base config - run the tool with no args to try it
+├── WorkingData/        # Your working files (mounted into the Docker container)
+│   ├── screener.ini    #   Base config - run the tool with no args to try it
+│   └── sample.csv      #   7-ticker sample universe
+├── compose.yaml        # Docker Compose: mounts WorkingData/ into the container
 ├── screener.ini.example  # Annotated settings-file template
 └── CMakeLists.txt
 ```
@@ -45,9 +47,14 @@ cmake --build build
 ./build/EquitiesScreener
 ```
 
-**Quick start:** after building, just run `./build/EquitiesScreener` from the
-project root — it auto-loads the included `screener.ini`, screens `sample.csv`,
-and writes `value_screened.csv` and `growth_screened.csv` next to it.
+**Quick start:** after building, run it from inside `WorkingData/` — it
+auto-loads `screener.ini`, screens `sample.csv`, and writes
+`value_screened.csv` and `growth_screened.csv` next to them:
+
+```bash
+cd WorkingData
+../build/EquitiesScreener
+```
 
 Or open the project directly in **CLion** — it will pick up `CMakeLists.txt` automatically.
 
@@ -61,6 +68,87 @@ cmake --build build --config Release
 ```
 
 Exit code `0` means all assertions passed.
+
+## Docker
+
+The container is designed to be used like a CLI: everything it reads and
+writes lives in the repo's `WorkingData/` folder, which Compose mounts into
+the container at `/work`. Edit files on your host, re-run — **no rebuilds**
+for data or config changes.
+
+### Interactive shell (recommended)
+
+```bash
+docker compose up        # builds on first run, then opens a bash shell in /work
+```
+
+You're now inside the container, in `/work` — which **is** your host's
+`WorkingData/` folder (mounted, so edits and outputs appear on both sides):
+
+```bash
+pwd                       # /work
+ls                        # your WorkingData files
+EquitiesScreener          # run the screens -> value_screened.csv & growth_screened.csv
+```
+
+The container's main process is `bash`, so it stays alive while you work.
+Exit the shell when done (`exit`) — the container exits too, and `restart` is
+explicitly off, so it never comes back on its own. **Take it down with:**
+
+```bash
+docker compose down
+```
+
+> `docker compose down` removes the container and its network. The container
+> stops by itself when you exit the shell (auto-restart is off), but it is
+> not removed — after `up` (or `up -d`), run `docker compose down` to take it
+> down completely.
+
+### One-shot run (no shell)
+
+```bash
+# via Compose (the entrypoint recognizes the binary name)
+docker compose run --rm screener EquitiesScreener
+
+# with extra flags
+docker compose run --rm screener EquitiesScreener -p
+
+# via plain docker (no Compose needed)
+docker run --rm -v "$(pwd)/WorkingData:/work" equities-screener
+```
+
+### Hop into a shell with plain docker
+
+```bash
+docker run --rm -it -v "$(pwd)/WorkingData:/work" equities-screener bash
+```
+
+### Configuration via environment variables
+
+| Env var | Effect |
+|---------|--------|
+| `SCREENER_CONFIG=<file.ini>` | Use this settings file instead of `screener.ini` (relative to `/work`) |
+| `SCREENER_INPUT=<universe.csv>` | Override the universe CSV (relative to `/work`) |
+| `SCREENER_PRETTY=1` | Also pretty-print results to the terminal |
+
+### Smart defaults
+
+- The image ships default `screener.ini` + `sample.csv` at
+  `/opt/equities-screener/` — outside `/work`, so a mount can't hide them.
+- On startup the entrypoint copies a missing file into `/work`; it never
+  overwrites a file you mounted. An empty or partial mount "just works".
+- Without any mount, `docker run equities-screener` still runs the sample
+  screens — but outputs are written into the container's own filesystem and
+  are lost when it exits. Mount `/work` to keep them.
+
+### Windows
+
+- **Git Bash / WSL:** `-v "$(pwd)/WorkingData:/work"` works.
+- **PowerShell:** `-v "${PWD}/WorkingData:/work"` or a literal
+  `-v C:\path\to\WorkingData:/work`.
+- Avoid `/tmp/...`-style paths in `-v` — Git Bash mangles them; use a full
+  Windows path instead. With Compose (`docker compose up`) none of this
+  matters — the mount is defined in `compose.yaml`.
 
 ## CLI Usage
 
