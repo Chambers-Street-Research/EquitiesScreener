@@ -1,0 +1,59 @@
+name: CI
+
+# Push to the default branch plus every pull request. (No `permissions`
+# block: the type=gha cache needs the default GITHUB_TOKEN's actions scope -
+# restricting it would silently disable cross-job caching.)
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+# Cancel in-progress runs for the same branch/PR when a newer push lands.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fast feedback: build the builder -> test stages and run the gtest suites.
+  # vcpkg installs and dependency builds are cached via the GitHub Actions
+  # cache (type=gha), so they only run once per baseline change.
+  test:
+    name: Unit tests (GoogleTest, statically linked)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and run tests
+        uses: docker/build-push-action@v6
+        with:
+          target: test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Ship the runtime image. `needs: test` means a failing test blocks the
+  # image build; the full build also re-runs the test stage as a gate.
+  image:
+    name: Build runtime image
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and load image
+        uses: docker/build-push-action@v6
+        with:
+          load: true
+          tags: equities-screener:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: docker run --rm equities-screener --help
