@@ -53,18 +53,28 @@ enable_warnings(EquitiesScreener)
 
 include(CTest)
 if(BUILD_TESTING)
-    if(NOT CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg")
-        message(FATAL_ERROR
-            "BUILD_TESTING is ON but no vcpkg toolchain was set. "
-            "GoogleTest comes from vcpkg - configure with "
+    # NOTE: this fail-soft guard is only correct while vcpkg provides test
+    # dependencies (gtest) alone. The moment vcpkg is needed for anything
+    # else (e.g. Boost in equities_core), the toolchain becomes a HARD build
+    # requirement: move the check to the top of the file as a FATAL_ERROR
+    # and delete the else-branch below (tests would then build whenever the
+    # app builds, and the CI test stage stays fail-closed).
+    if(CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg")
+        find_package(GTest CONFIG REQUIRED)
+
+        add_executable(equities_tests tests/config_test.cpp)
+        target_link_libraries(equities_tests PRIVATE equities_core GTest::gtest_main)
+        enable_warnings(equities_tests)
+
+        add_test(NAME equities_tests COMMAND equities_tests)
+    else()
+        # GoogleTest comes from vcpkg. A plain `cmake -B build` (no toolchain)
+        # must still configure - we just skip the test suite.
+        message(WARNING
+            "BUILD_TESTING is ON but no vcpkg toolchain was set - skipping "
+            "tests. To enable them, configure with "
             "-DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake "
-            "(see README 'Tests'), or pass -DBUILD_TESTING=OFF to skip tests.")
+            "(see README 'Tests'), or pass -DBUILD_TESTING=OFF to silence "
+            "this warning.")
     endif()
-    find_package(GTest CONFIG REQUIRED)
-
-    add_executable(equities_tests tests/config_test.cpp)
-    target_link_libraries(equities_tests PRIVATE equities_core GTest::gtest_main)
-    enable_warnings(equities_tests)
-
-    add_test(NAME equities_tests COMMAND equities_tests)
 endif()
