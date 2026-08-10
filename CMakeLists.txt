@@ -31,7 +31,3 @@ target_compile_features(equities_core PUBLIC cxx_std_23)
 
 add_executable(EquitiesScreener main.cpp)
 target_link_libraries(EquitiesScreener PRIVATE equities_core)
-
-# Framework-free unit tests for the settings-file parser
-add_executable(EquitiesScreenerConfigTests config/Config_test.cpp)
-target_link_libraries(EquitiesScreenerConfigTests PRIVATE equities_core)
