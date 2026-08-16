@@ -72,6 +72,12 @@ namespace Engine {
 
         // Output helper
         void printResults(const std::vector<Data::Equity>& results, std::ostream& os = std::cout) const;
+
+        // Same table for callers that no longer hold the Engine (the results
+        // outlived it): universe_size is the "out of N total" header figure.
+        static void printResults(const std::vector<Data::Equity>& results,
+                                 std::size_t universe_size,
+                                 std::ostream& os = std::cout);
     };
 
 } // namespace Engine

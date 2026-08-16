@@ -16,7 +16,9 @@ add_library(equities_core STATIC
         io/Csv.cpp
         io/Csv.h
         config/Config.cpp
-        config/Config.h)
+        config/Config.h
+        app/Screener.cpp
+        app/Screener.h)
 
 # PUBLIC: headers are included as "engine/Engine.h" etc., relative to the
 # project root, so anything linking equities_core inherits this search path.
