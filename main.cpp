@@ -1,12 +1,19 @@
+// ============================================================
+//  EquitiesScreener - command-line front-end
+//
+//  This file is the CLI and nothing else: it parses argv, points
+//  equities_core at a settings file, and formats what comes back for the
+//  terminal. All screening logic lives in App::runFlagMode /
+//  App::runConfigMode (app/Screener.h).
+// ============================================================
+
+#include "app/Screener.h"
 #include "config/Config.h"
-#include "data/Equity.h"
 #include "engine/Engine.h"
 #include "io/Csv.h"
 
-#include <algorithm>
-#include <charconv>
 #include <cctype>
-#include <cstdlib>
+#include <charconv>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -23,11 +30,11 @@
 // ============================================================
 
 struct CliArgs {
-    std::string                                             inputFile;   // positional or --input
-    std::optional<std::string>                              configFile;  // --config
-    std::vector<Engine::FilterRule>                         filters;     // -f (CLI extras)
-    std::optional<std::pair<Data::Metric, Engine::SortOrder>> sort;      // -s
-    std::string                                             outputFile;  // -o
+    std::string                     inputFile;   // positional or --input
+    std::optional<std::string>      configFile;  // --config
+    std::vector<Engine::FilterRule> filters;     // -f (CLI extras)
+    std::optional<Config::SortSpec> sort;        // -s
+    std::string                     outputFile;  // -o
     bool pretty = false;
     bool help   = false;
     bool valid  = true;
@@ -121,8 +128,7 @@ namespace {
         return Engine::FilterRule{*metric, minVal, maxVal};
     }
 
-    std::optional<std::pair<Data::Metric, Engine::SortOrder>>
-    parseSortArg(std::string_view arg) {
+    std::optional<Config::SortSpec> parseSortArg(std::string_view arg) {
         auto colon = arg.find(':');
         std::string_view metricName = arg.substr(0, colon);
         auto metric = Config::parseMetric(metricName);
@@ -136,138 +142,71 @@ namespace {
             if (orderStr == "ASC" || orderStr == "asc")
                 order = Engine::SortOrder::Ascending;
         }
-        return std::pair{*metric, order};
+        return Config::SortSpec{*metric, order};
     }
 
-    // shared error reporting for CSV reads
-    int reportCsvError(IO::CsvError error, std::string_view path) {
-        switch (error) {
-        case IO::CsvError::FileNotFound:
-            std::println(stderr, "Error: file not found - \"{}\"", path);
-            break;
-        case IO::CsvError::EmptyFile:
-            std::println(stderr, "Error: file is empty - \"{}\"", path);
-            break;
-        default:
-            std::println(stderr, "Error: could not read \"{}\"", path);
-            break;
-        }
-        return 1;
+    // ============================================================
+    //  Console output
+    // ============================================================
+
+    /// Options the core needs, minus everything that is purely presentational.
+    App::Overrides toOverrides(const CliArgs& opts) {
+        return App::Overrides{
+            .inputFile  = opts.inputFile,
+            .filters    = opts.filters,
+            .sort       = opts.sort,
+            .outputFile = opts.outputFile,
+        };
     }
 
-    // ── legacy mode: the original flag-based CLI behavior ──
-    int runLegacyMode(const CliArgs& opts) {
-        auto csvResult = IO::readCsv(opts.inputFile);
-        if (!csvResult) return reportCsvError(csvResult.error(), opts.inputFile);
+    int reportError(const App::Error& error) {
+        std::println(stderr, "Error: {}", error.message);
+        return error.exitCode;
+    }
 
-        for (const auto& w : csvResult->warnings)
-            std::println(stderr, "Warning: {}", w);
+    void printWarning(std::string_view message) {
+        std::println(stderr, "Warning: {}", message);
+    }
 
-        Engine::Engine screener(std::move(csvResult->equities));
-        for (const auto& rule : opts.filters)
-            screener.addFilter(rule);
+    // ── flag-based mode: input CSV plus -f/-s/-o/-p ──
+    int runFlagMode(const CliArgs& opts) {
+        App::Overrides overrides = toOverrides(opts);
 
-        auto results = screener.runScreen();
-        if (opts.sort)
-            Engine::Engine::sortEquities(results, opts.sort->first, opts.sort->second);
+        // --pretty replaces file output entirely, so the core is not asked to
+        // write anything and the results come back for the terminal instead.
+        if (opts.pretty) overrides.outputFile.clear();
 
-        if (opts.pretty) {
-            screener.printResults(results);
-        } else if (!opts.outputFile.empty()) {
-            auto written = IO::writeCsv(opts.outputFile, results);
-            if (!written) {
-                std::println(stderr, "Error: could not write to \"{}\"", opts.outputFile);
-                return 1;
-            }
-            std::println(stderr, "Wrote {} equities to \"{}\"", results.size(), opts.outputFile);
-        } else {
-            if (!IO::writeCsv(std::cout, results)) {
-                std::println(stderr, "Error: could not write to stdout");
-                return 1;
-            }
+        auto screen = App::runFlagMode(overrides, App::Reporter{.warning = printWarning});
+        if (!screen) return reportError(screen.error());
+
+        if (screen->outputFile) {
+            std::println(stderr, "Wrote {} equities to \"{}\"",
+                         screen->equities.size(), *screen->outputFile);
+        } else if (opts.pretty) {
+            Engine::Engine::printResults(screen->equities, screen->universeSize);
+        } else if (!IO::writeCsv(std::cout, screen->equities)) {
+            std::println(stderr, "Error: could not write to stdout");
+            return 1;
         }
         return 0;
     }
 
-    // ── settings-file mode ──
+    // ── settings-file mode: every screen in the file ──
     int runConfigMode(const std::string& settingsPath, const CliArgs& opts) {
-        auto parsed = Config::parseSettingsFile(settingsPath);
-        if (!parsed) {
-            std::println(stderr, "Error: {}", parsed.error());
-            return 1;
-        }
-        Config::AppConfig config = std::move(*parsed);
-
-        // resolve input CSV: CLI override (positional or --input) > settings input
-        std::string inputPath = opts.inputFile.empty() ? config.inputFile : opts.inputFile;
-        if (inputPath.empty()) {
-            std::println(stderr,
-                "Error: no input CSV - set \"input =\" in \"{}\" or pass one on the command line",
-                settingsPath);
-            return 1;
-        }
-
-        if (!opts.outputFile.empty() && config.screens.size() != 1) {
-            std::println(stderr,
-                "Error: --output is only valid when the settings file defines exactly ONE screen "
-                "(use per-screen \"output =\" for multiple screens)");
-            return 2;
-        }
-
-        auto csvResult = IO::readCsv(inputPath);
-        if (!csvResult) return reportCsvError(csvResult.error(), inputPath);
-
-        for (const auto& w : csvResult->warnings)
-            std::println(stderr, "Warning: {}", w);
-
-        // the universe is read once and shared by every screen
-        Engine::Engine screener(std::move(csvResult->equities));
-
-        for (const auto& screen : config.screens) {
-            // 1) filters: settings first, CLI -f appended (AND-combined)
-            std::vector<Engine::FilterRule> rules = screen.filters;
-            rules.insert(rules.end(), opts.filters.begin(), opts.filters.end());
-
-            // 2) presence-aware screening: exclude + warn on missing metric data
-            std::vector<Data::Equity> results;
-            for (const auto& eq : screener.getUniverse()) {
-                bool missing = false;
-                for (const auto& rule : rules) {
-                    if (!eq.hasMetric(rule.metric)) {
-                        std::println(stderr, "Warning: Screen '{}': excluded {} - missing {} data",
-                                     screen.name, eq.getTicker(), Config::metricName(rule.metric));
-                        missing = true;   // report every missing metric (no break)
-                    }
-                }
-                if (missing) continue;
-                if (screener.matchesFilters(eq, rules)) results.push_back(eq);
-            }
-
-            // 3) sort: CLI -s overrides the screen's own sort
-            std::optional<Config::SortSpec> sortSpec;
-            if (opts.sort) {
-                sortSpec = Config::SortSpec{opts.sort->first, opts.sort->second};
-            } else if (screen.sort) {
-                sortSpec = screen.sort;
-            }
-            if (sortSpec)
-                Engine::Engine::sortEquities(results, sortSpec->metric, sortSpec->order);
-
-            // 4) output path: -o > output= > {name}_screened.csv
-            std::string outPath = opts.outputFile.empty()
-                ? (screen.outputFile ? *screen.outputFile : Config::defaultOutputName(screen.name))
-                : opts.outputFile;
-
-            auto written = IO::writeCsv(outPath, results);
-            if (!written) {
-                std::println(stderr, "Error: could not write to \"{}\"", outPath);
-                return 1;
-            }
+        // Reported as each screen finishes so the output stays in step with
+        // the warnings the screen produced.
+        auto announce = [&opts](const App::ScreenResult& screen) {
             std::println(stderr, "Screen '{}': wrote {} equities to \"{}\"",
-                         screen.name, results.size(), outPath);
+                         screen.name, screen.equities.size(),
+                         screen.outputFile.value_or(std::string{}));
+            if (opts.pretty)
+                Engine::Engine::printResults(screen.equities, screen.universeSize);
+        };
 
-            if (opts.pretty) screener.printResults(results);
-        }
+        auto screens = App::runConfigMode(settingsPath, toOverrides(opts),
+                                          App::Reporter{.warning        = printWarning,
+                                                        .screenFinished = announce});
+        if (!screens) return reportError(screens.error());
         return 0;
     }
 
@@ -352,7 +291,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (opts.configFile) return runConfigMode(*opts.configFile, opts);
-    if (!opts.inputFile.empty()) return runLegacyMode(opts);
+    if (!opts.inputFile.empty()) return runFlagMode(opts);
 
     // no --config and no input: auto-load ./screener.ini if present
     if (std::filesystem::exists("screener.ini")) return runConfigMode("screener.ini", opts);
