@@ -37,6 +37,7 @@ WORKDIR /src
 # unless CMakeLists.txt itself changed.
 COPY CMakeLists.txt ./
 COPY vcpkg.json ./
+COPY app/ app/
 COPY config/ config/
 COPY data/ data/
 COPY engine/ engine/

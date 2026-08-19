@@ -16,7 +16,9 @@ add_library(equities_core STATIC
         io/Csv.cpp
         io/Csv.h
         config/Config.cpp
-        config/Config.h)
+        config/Config.h
+        app/Screener.cpp
+        app/Screener.h)
 
 # PUBLIC: headers are included as "engine/Engine.h" etc., relative to the
 # project root, so anything linking equities_core inherits this search path.
@@ -26,11 +28,16 @@ target_include_directories(equities_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(equities_core PUBLIC cxx_std_23)
 
 # ============================================================
-#  Executables
+#  equities_cli - command-line front-end, no logic of its own
 # ============================================================
 
-add_executable(EquitiesScreener main.cpp)
-target_link_libraries(EquitiesScreener PRIVATE equities_core)
+add_executable(equities_cli main.cpp)
+target_link_libraries(equities_cli PRIVATE equities_core)
+
+# The target is named for what it is (one of possibly several front-ends over
+# equities_core); the binary keeps the name users already invoke - the README,
+# the Docker image and its entrypoint all call it EquitiesScreener.
+set_target_properties(equities_cli PROPERTIES OUTPUT_NAME EquitiesScreener)
 
 # ============================================================
 #  Compiler warnings: -Wall -Wextra (GCC/Clang), /W4 (MSVC)
@@ -45,7 +52,7 @@ function(enable_warnings target)
 endfunction()
 
 enable_warnings(equities_core)
-enable_warnings(EquitiesScreener)
+enable_warnings(equities_cli)
 
 # ============================================================
 #  Tests - GoogleTest via vcpkg (see vcpkg.json)

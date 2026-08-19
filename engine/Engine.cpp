@@ -146,8 +146,14 @@ namespace Engine {
     }
 
     void Engine::printResults(const std::vector<Data::Equity>& results, std::ostream& os) const {
+        printResults(results, universe.size(), os);
+    }
+
+    void Engine::printResults(const std::vector<Data::Equity>& results,
+                              std::size_t universe_size,
+                              std::ostream& os) {
         os << "==========================================================================================\n";
-        os << " Screener Results (" << results.size() << " matched out of " << universe.size() << " total equities)\n";
+        os << " Screener Results (" << results.size() << " matched out of " << universe_size << " total equities)\n";
         os << "==========================================================================================\n";
         if (results.empty()) {
             os << " No equities matched the screening criteria.\n";
