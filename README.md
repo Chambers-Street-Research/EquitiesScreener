@@ -4,6 +4,7 @@ A lightweight C++ equity screening engine that filters and ranks stocks based on
 
 ## Features
 
+- **Financial Modeling Prep (FMP) API** — natively pull live stock quotes, company profiles, and fundamental valuation/profitability ratios by symbol or sector
 - **CSV I/O** — load equity universes from CSV files and export screened results back to CSV
 - **File-based settings** — describe your screens in an INI file (`screener.ini`) and run them all with one command
 - **Multi-metric filtering** — screen equities by P/E, Forward P/E, P/B, P/S, EV/EBITDA, ROA, ROE, and ROIC
@@ -23,10 +24,14 @@ EquitiesScreener/
 │   └── Engine.cpp      # Filter, screen, sort logic
 ├── io/
 │   ├── Csv.h           # CSV reader & writer API
-│   └── Csv.cpp         # Parsing & formatting with C++23 ranges
+│   ├── Csv.cpp         # Parsing & formatting with C++23 ranges
+│   ├── Json.h          # Lightweight C++23 JSON parser
+│   ├── Json.cpp
+│   ├── FmpClient.h     # Native Financial Modeling Prep (FMP) API client
+│   └── FmpClient.cpp
 ├── config/
 │   ├── Config.h        # Settings-file model & INI parser API
-│   └── Config.cpp      # INI parsing, metric names, output naming
+│   └── Config.cpp      # INI parsing (screens and [fmp] section)
 ├── tests/
 │   └── config_test.cpp # GoogleTest suite for the INI parser (gtest via vcpkg)
 ├── main.cpp            # CLI — CSV in, filtered/sorted CSV out
@@ -34,7 +39,7 @@ EquitiesScreener/
 │   ├── screener.ini    #   Base config - run the tool with no args to try it
 │   └── sample.csv      #   7-ticker sample universe
 ├── compose.yaml        # Docker Compose: mounts WorkingData/ into the container
-├── vcpkg.json          # vcpkg manifest: gtest dependency
+├── vcpkg.json          # vcpkg manifest: cpr and gtest dependencies
 ├── screener.ini.example  # Annotated settings-file template
 └── CMakeLists.txt
 ```
@@ -42,11 +47,11 @@ EquitiesScreener/
 ## Build
 
 Requires **CMake ≥ 3.20** and a **C++23**-capable compiler (GCC, Clang, or MSVC).
-Tests additionally require **vcpkg** (see [Tests](#tests)) — pass
+Dependencies use **vcpkg** (see [Tests](#tests)); tests also require Python 3 — pass
 `-DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake` to CMake.
 
 ```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=<path-to-vcpkg>/scripts/buildsystems/vcpkg.cmake
 cmake --build build
 ./build/EquitiesScreener
 ```
@@ -73,12 +78,12 @@ build gate; locally you need vcpkg + its CMake toolchain:
 git clone https://github.com/microsoft/vcpkg
 ./vcpkg/bootstrap-vcpkg.sh        # Windows: .\vcpkg\bootstrap-vcpkg.bat
 
-# configure with the vcpkg toolchain (installs gtest automatically)
+# configure with the vcpkg toolchain (installs cpr and gtest automatically)
 cmake -B build -DCMAKE_TOOLCHAIN_FILE=<path-to-vcpkg>/scripts/buildsystems/vcpkg.cmake
 
 # build & run the tests
-cmake --build build --target equities_tests
-./build/equities_tests            # or: ctest --test-dir build --output-on-failure
+cmake --build build
+ctest --test-dir build --output-on-failure
 ```
 
 > With a multi-config generator (e.g. Visual Studio), the binary lands under
@@ -194,6 +199,13 @@ EquitiesScreener stocks.csv -f ROIC:0.25: -o high_roic.csv
 # Pretty-print to terminal
 EquitiesScreener stocks.csv -f PE:0:30 -f ROE:0.15 -p
 
+# ── Financial Modeling Prep (FMP) mode ─────────────────────────────────────
+# Screen stocks directly from FMP by sector (requires export FMP_API_KEY=...)
+EquitiesScreener --fmp --sector Technology -f PE:0:35 -s ROE:desc -p
+
+# Screen specific tickers directly from FMP
+EquitiesScreener --fmp --symbols AAPL,MSFT,NVDA,GOOGL,AMZN -f ROE:0.20: -p
+
 # Show help
 EquitiesScreener -h
 ```
@@ -204,6 +216,10 @@ EquitiesScreener -h
 |------|---------|
 | `-c, --config <FILE>` | Use `<FILE>` as the settings file |
 | `-i, --input <FILE>` | Override the universe CSV declared in the settings file |
+| `--fmp` | Fetch data directly from Financial Modeling Prep (requires `FMP_API_KEY`) |
+| `--sector <NAME>` | Fetch universe for a sector (e.g. `Technology`, `Healthcare`) |
+| `--symbols <SYM1,SYM2>` | Fetch specific ticker symbols from FMP |
+| `--limit <N>` | Max stocks to fetch from FMP (default: 25) |
 | `-f, --filter <METRIC:MIN:MAX>` | Add a filter (repeatable) |
 | `-s, --sort <METRIC[:ASC\|DESC]>` | Sort results (default: descending) |
 | `-o, --output <FILE>` | Write CSV to a file (default: stdout) |
@@ -253,6 +269,20 @@ input = stocks.csv
 The 13-column universe CSV (same layout as `sample.csv`). It is read **once**
 and shared by every screen. Overridable from the CLI with a positional argument
 or `--input`.
+
+### Financial Modeling Prep — `[fmp]`
+
+Instead of an input CSV, you can configure the screener to pull data live from Financial Modeling Prep:
+
+```ini
+[fmp]
+# api_key = your_key   # optional: defaults to FMP_API_KEY environment variable
+sector = Technology    # fetch stocks in a sector
+# symbols = AAPL,MSFT  # or list exact tickers
+limit = 30             # max stocks to fetch (default: 25)
+```
+
+Setting `[fmp]` automatically fetches real-time prices, company names, exchanges, and full fundamental metrics (`PE`, `ForwardPE`, `PB`, `PS`, `EV/EBITDA`, `ROA`, `ROE`, `ROIC`).
 
 ### Screen sections — `[screen:NAME]`
 
@@ -404,3 +434,91 @@ for (const auto& screen : config->screens) {
 ## License
 
 MIT
+
+## Live market data (Alpaca)
+
+The live adapter uses Alpaca's documented market-data REST API. Each screen run
+fetches a fresh quote snapshot; this is not a continuous WebSocket subscription.
+The default `iex` feed covers IEX only. `sip` requires the appropriate Alpaca
+entitlement. Latest quotes can be old outside trading hours. `Quote` preserves
+the provider timestamp, bid and ask; the screener's SpotPrice is their midpoint,
+not a last trade or an executable price. Fundamentals remain missing and screens
+requiring them exclude these rows. Existing CSV and FMP modes remain available.
+
+Set `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY` in the environment, then use:
+
+```ini
+source = alpaca
+[alpaca]
+symbols = AAPL, MSFT
+feed = iex
+timeout_ms = 5000
+[screen:prices]
+filter = SPOTPRICE:50:500
+output = prices.csv
+```
+
+Run `EquitiesScreener --config screener.ini` (or run without flags in the directory
+containing `screener.ini`). `api_key` and `secret_key` can also be set in `[alpaca]`,
+but environment variables avoid storing secrets in a settings file. Explicit
+`source = csv` uses `input = stocks.csv` even when provider sections are present.
+An explicit CLI FMP override still selects FMP. `--input` overrides Alpaca with CSV.
+Errors fail the run without silently falling back to old CSV prices or publishing
+a partially fetched universe.
+
+The provider-neutral `IO::MarketDataClient` exposes `fetchQuote(symbol)` and
+`fetchHistory(symbol, start, end)`. History uses inclusive `YYYY-MM-DD` bounds and
+returns paginated daily, unadjusted OHLCV bars with timestamps. Pagination is
+limited to 100 pages / 100,000 bars and fails if truncated. Example:
+
+```cpp
+#include "io/MarketData.h"
+IO::CprTransport http;
+IO::AlpacaClient api({apiKey, secretKey}, http);
+auto quote = api.fetchQuote("AAPL");
+auto history = api.fetchHistory("AAPL", "2026-09-01", "2026-09-25");
+// Check std::expected before accessing either result.
+```
+
+### HTTP library decision and failure handling
+
+We selected **cpr**, declared in `vcpkg.json`, over cpp-httplib. cpr offers a C++
+interface over the libcurl dependency already used by FMP, encoded query
+parameters, certificate verification, and separate connection/request timeouts.
+cpp-httplib is a reasonable lighter client/server alternative but would introduce
+a second HTTP implementation and TLS setup here. `HttpTransport` isolates cpr
+from provider logic; a future data-server adapter can implement `MarketDataClient`
+without changing screening logic.
+
+Requests use at most three attempts. Timeouts, connectivity failures, HTTP 429 and
+500/502/503/504 retry with 250/500 ms backoff. `Retry-After` (seconds or HTTP date)
+and Alpaca's `X-RateLimit-Reset` are respected; waits over five seconds return an
+error for later rescheduling instead of retrying early. Authentication and other
+HTTP errors do not retry. Each attempt has a configurable 1..60000 ms total timeout
+and a connection timeout of at most two seconds. TLS verification stays enabled;
+redirects are disabled to avoid forwarding credentials. HTTP is allowed only for
+127.0.0.1 test servers. Errors omit credentials and response bodies.
+
+References: [Alpaca latest quotes](https://docs.alpaca.markets/us/v1.4.2/reference/stocklatestquotesingle-1),
+[cpr timeouts](https://docs.libcpr.dev/advanced-usage.html),
+[cpp-httplib](https://github.com/yhirose/cpp-httplib),
+[Alpaca historical bars](https://docs.alpaca.markets/us/v1.1/reference/stockbarsingle-1),
+[Alpaca data feeds](https://docs.alpaca.markets/us/v1.1/docs/about-market-data-api).
+
+### Building and testing live ingestion
+
+cpr is now a required production dependency. Use the vcpkg toolchain (or provide
+installed cpr, CURL and GTest CMake packages). Tests require Python 3 and fail
+configuration if dependencies are missing; they are no longer silently skipped.
+
+```sh
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+Unit tests inject HTTP responses and a fake sleeper. Integration tests run
+the CLI against an ephemeral loopback HTTP server and verify credentials, CSV
+switching, retries, timeouts, bad responses and connectivity failures. No Alpaca
+account, secrets or internet access is required to run tests. Live provider
+entitlements and current market availability require separate credentialed checks.

@@ -35,6 +35,10 @@ struct CliArgs {
     std::vector<Engine::FilterRule> filters;     // -f (CLI extras)
     std::optional<Config::SortSpec> sort;        // -s
     std::string                     outputFile;  // -o
+    bool useFmp = false;                         // --fmp
+    std::string sector;                          // --sector
+    std::vector<std::string> symbols;            // --symbols
+    std::size_t limit = 0;                       // --limit
     bool pretty = false;
     bool help   = false;
     bool valid  = true;
@@ -48,10 +52,11 @@ namespace {
 
     void printUsage() {
         std::println(stderr,
-            "EquitiesScreener - filter and rank stocks from a CSV file.\n"
+            "EquitiesScreener - filter and rank stocks from CSV or Financial Modeling Prep.\n"
             "\n"
             "Usage:\n"
-            "  EquitiesScreener <input.csv> [options]          flag-based mode\n"
+            "  EquitiesScreener <input.csv> [options]          flag-based CSV mode\n"
+            "  EquitiesScreener --fmp [fmp-options] [options]  flag-based FMP mode\n"
             "  EquitiesScreener [--config <settings.ini>] [options]\n"
             "                                                  settings-file mode\n"
             "                                                  (auto-loads ./screener.ini\n"
@@ -60,6 +65,12 @@ namespace {
             "Settings-file mode:\n"
             "  -c, --config <FILE>        Use FILE as the settings file.\n"
             "  -i, --input <FILE>         Override the universe CSV declared in the file.\n"
+            "\n"
+            "Financial Modeling Prep (FMP) options:\n"
+            "  --fmp                      Fetch data directly from FMP API (requires FMP_API_KEY).\n"
+            "  --sector <NAME>            Fetch universe for a specific sector (e.g. Technology).\n"
+            "  --symbols <SYM1,SYM2,...>  Fetch specific tickers (e.g. AAPL,MSFT,NVDA).\n"
+            "  --limit <N>                Max stocks to fetch from FMP (default: 25).\n"
             "\n"
             "Options (flag-based mode; in settings-file mode they extend every screen):\n"
             "  -f, --filter <METRIC:MIN:MAX>   Apply a filter. MAX is optional.\n"
@@ -151,11 +162,23 @@ namespace {
 
     /// Options the core needs, minus everything that is purely presentational.
     App::Overrides toOverrides(const CliArgs& opts) {
+        std::optional<Config::FmpConfig> fmpCfg;
+        if (opts.useFmp || !opts.sector.empty() || !opts.symbols.empty() || opts.limit > 0) {
+            Config::FmpConfig cfg;
+            cfg.enabled = true;
+            cfg.sector  = opts.sector;
+            cfg.symbols = opts.symbols;
+            if (opts.limit > 0) cfg.limit = opts.limit;
+            fmpCfg = std::move(cfg);
+        }
+
         return App::Overrides{
             .inputFile  = opts.inputFile,
             .filters    = opts.filters,
             .sort       = opts.sort,
             .outputFile = opts.outputFile,
+            .useFmp     = opts.useFmp || fmpCfg.has_value(),
+            .fmpConfig  = std::move(fmpCfg),
         };
     }
 
@@ -176,7 +199,9 @@ namespace {
         // write anything and the results come back for the terminal instead.
         if (opts.pretty) overrides.outputFile.clear();
 
-        auto screen = App::runFlagMode(overrides, App::Reporter{.warning = printWarning});
+        App::Reporter reporter;
+        reporter.warning = printWarning;
+        auto screen = App::runFlagMode(overrides, reporter);
         if (!screen) return reportError(screen.error());
 
         if (screen->outputFile) {
@@ -258,6 +283,46 @@ CliArgs parseArgs(int argc, char** argv) {
             opts.outputFile = argv[++i];
             continue;
         }
+        if (arg == "--fmp") {
+            opts.useFmp = true;
+            continue;
+        }
+        if (arg == "--sector") {
+            if (i + 1 >= argc) { opts.valid = false; return opts; }
+            opts.sector = argv[++i];
+            opts.useFmp = true;
+            continue;
+        }
+        if (arg == "--symbols") {
+            if (i + 1 >= argc) { opts.valid = false; return opts; }
+            opts.useFmp = true;
+            std::string_view symList{argv[++i]};
+            std::size_t start = 0;
+            while (start < symList.size()) {
+                auto comma = symList.find(',', start);
+                auto token = (comma == std::string_view::npos) ? symList.substr(start) : symList.substr(start, comma - start);
+                while (!token.empty() && std::isspace(static_cast<unsigned char>(token.front()))) token.remove_prefix(1);
+                while (!token.empty() && std::isspace(static_cast<unsigned char>(token.back()))) token.remove_suffix(1);
+                if (!token.empty()) opts.symbols.emplace_back(token);
+                if (comma == std::string_view::npos) break;
+                start = comma + 1;
+            }
+            continue;
+        }
+        if (arg == "--limit") {
+            if (i + 1 >= argc) { opts.valid = false; return opts; }
+            std::string_view limStr{argv[++i]};
+            int lim = 0;
+            auto [p, ec] = std::from_chars(limStr.data(), limStr.data() + limStr.size(), lim);
+            if (ec == std::errc{} && lim > 0) {
+                opts.limit = static_cast<std::size_t>(lim);
+            } else {
+                std::println(stderr, "Invalid limit: \"{}\"", limStr);
+                opts.valid = false;
+                return opts;
+            }
+            continue;
+        }
 
         if (!arg.starts_with('-')) {
             if (opts.inputFile.empty()) {
@@ -291,7 +356,9 @@ int main(int argc, char* argv[]) {
     }
 
     if (opts.configFile) return runConfigMode(*opts.configFile, opts);
-    if (!opts.inputFile.empty()) return runFlagMode(opts);
+    if (!opts.inputFile.empty() || opts.useFmp || !opts.sector.empty() || !opts.symbols.empty()) {
+        return runFlagMode(opts);
+    }
 
     // no --config and no input: auto-load ./screener.ini if present
     if (std::filesystem::exists("screener.ini")) return runConfigMode("screener.ini", opts);

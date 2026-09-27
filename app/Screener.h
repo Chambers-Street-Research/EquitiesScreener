@@ -23,6 +23,8 @@ namespace App {
         std::vector<Engine::FilterRule> filters;     // appended to every screen (AND-combined)
         std::optional<Config::SortSpec> sort;        // replaces each screen's own sort
         std::string                     outputFile;  // "" → each screen's own destination
+        bool                            useFmp{false};
+        std::optional<Config::FmpConfig> fmpConfig;
     };
 
     /// One finished screen, ready for a front-end to report.

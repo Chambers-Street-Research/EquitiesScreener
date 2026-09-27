@@ -37,12 +37,22 @@ namespace IO {
         /// Split a line by commas into string_views (zero-copy).
         auto splitFields(std::string_view line)
             -> std::vector<std::string_view> {
-            return line
-                 | std::views::split(',')
-                 | std::views::transform([](auto r) {
-                       return std::string_view{r.begin(), r.end()};
-                   })
-                 | std::ranges::to<std::vector<std::string_view>>();
+            std::vector<std::string_view> fields;
+
+            std::size_t start = 0;
+            while (start <= line.size()) {
+                const std::size_t comma = line.find(',', start);
+
+                if (comma == std::string_view::npos) {
+                    fields.emplace_back(line.substr(start));
+                    break;
+                }
+
+                fields.emplace_back(line.substr(start, comma - start));
+                start = comma + 1;
+            }
+
+            return fields;
         }
 
         /// CSV column indices (zero-based).
