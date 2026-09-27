@@ -71,6 +71,30 @@
 input = sample.csv
 
 
+# ----------------------------------------------------------------------------
+#  FINANCIAL MODELING PREP (FMP) CONFIGURATION: [fmp]
+# ----------------------------------------------------------------------------
+#  Instead of reading from a local CSV file, EquitiesScreener can fetch real-time
+#  stock profiles, spot prices, and fundamental valuation/profitability ratios
+#  directly from Financial Modeling Prep's API.
+#
+#  To use FMP, uncomment the [fmp] section below or set source = fmp:
+#
+#  [fmp]
+#  # API Key: falls back to the FMP_API_KEY environment variable if omitted.
+#  # api_key = your_fmp_api_key_here
+#
+#  # Screen by sector: fetches actively trading stocks for a sector
+#  # (e.g., Technology, Financial Services, Healthcare, Consumer Cyclical, Energy)
+#  sector = Technology
+#
+#  # Or specify exact tickers:
+#  # symbols = AAPL, MSFT, NVDA, GOOGL, AMZN
+#
+#  # Limit: max number of stocks to pull from FMP (default: 25)
+#  limit = 25
+
+
 # ============================================================================
 #  SCREENS
 # ============================================================================
@@ -148,3 +172,9 @@ output = quality_screened.csv
 # A screen with NO filters passes the whole universe through untouched — a
 # handy way to copy or "transcode" your input CSV. No `sort` either, so rows
 # keep their input-file order. Output is auto-named: export_screened.csv.
+# Alpaca live quotes: set source = alpaca at the top of this file, then add:
+# [alpaca]
+# symbols = AAPL, MSFT
+# feed = iex
+# timeout_ms = 5000
+# Credentials: APCA_API_KEY_ID and APCA_API_SECRET_KEY environment variables.

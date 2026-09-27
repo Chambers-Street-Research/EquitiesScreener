@@ -2,6 +2,7 @@
 #define EQUITIESSCREENER_CONFIG_H
 
 #include "../data/Equity.h"
+#include "../io/MarketData.h"
 #include "../engine/Engine.h"
 
 #include <expected>
@@ -26,9 +27,27 @@ namespace Config {
         std::optional<std::string>        outputFile;  // nullopt → defaultOutputName()
     };
 
+    /// FMP configuration from an `[fmp]` section.
+    struct FmpConfig {
+        std::string              apiKey;
+        std::string              baseUrl{"https://financialmodelingprep.com/api/v3"};
+        std::vector<std::string> symbols;
+        std::string              sector;
+        std::size_t              limit{25};
+        bool                     enabled{false};
+    };
+
+    struct AlpacaConfig {
+        IO::AlpacaOptions options;
+        std::vector<std::string> symbols;
+    };
+
     /// The full parsed contents of a settings file.
     struct AppConfig {
         std::string                       inputFile;   // global `input =` key (may be empty)
+        std::string                       source;      // "csv", "fmp", or "alpaca"
+        std::optional<AlpacaConfig> alpaca;
+        std::optional<FmpConfig>          fmp;         // parsed [fmp] section
         std::vector<ScreenConfig>         screens;     // in file order
     };
 

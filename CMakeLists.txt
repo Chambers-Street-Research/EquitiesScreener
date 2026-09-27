@@ -3,6 +3,22 @@ project(EquitiesScreener)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+find_package(CURL REQUIRED)
+
+include(FetchContent)
+
+FetchContent_Declare(
+        cpr
+        GIT_REPOSITORY https://github.com/libcpr/cpr.git
+        GIT_TAG 1.12.0
+)
+set(CPR_USE_SYSTEM_CURL ON CACHE BOOL "" FORCE)
+set(CPR_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(CPR_BUILD_TESTS_SSL OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(cpr)
 
 # ============================================================
 #  equities_core - all business logic, no entry point
@@ -13,12 +29,19 @@ add_library(equities_core STATIC
         data/Equity.h
         engine/Engine.cpp
         engine/Engine.h
+        io/MarketData.cpp
         io/Csv.cpp
         io/Csv.h
+        io/Json.cpp
+        io/Json.h
+        io/FmpClient.cpp
+        io/FmpClient.h
         config/Config.cpp
         config/Config.h
         app/Screener.cpp
         app/Screener.h)
+
+target_link_libraries(equities_core PUBLIC CURL::libcurl cpr::cpr)
 
 # PUBLIC: headers are included as "engine/Engine.h" etc., relative to the
 # project root, so anything linking equities_core inherits this search path.
@@ -60,28 +83,16 @@ enable_warnings(equities_cli)
 
 include(CTest)
 if(BUILD_TESTING)
-    # NOTE: this fail-soft guard is only correct while vcpkg provides test
-    # dependencies (gtest) alone. The moment vcpkg is needed for anything
-    # else (e.g. Boost in equities_core), the toolchain becomes a HARD build
-    # requirement: move the check to the top of the file as a FATAL_ERROR
-    # and delete the else-branch below (tests would then build whenever the
-    # app builds, and the CI test stage stays fail-closed).
-    if(CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg")
-        find_package(GTest CONFIG REQUIRED)
-
-        add_executable(equities_tests tests/config_test.cpp)
-        target_link_libraries(equities_tests PRIVATE equities_core GTest::gtest_main)
-        enable_warnings(equities_tests)
-
-        add_test(NAME equities_tests COMMAND equities_tests)
-    else()
-        # GoogleTest comes from vcpkg. A plain `cmake -B build` (no toolchain)
-        # must still configure - we just skip the test suite.
-        message(WARNING
-            "BUILD_TESTING is ON but no vcpkg toolchain was set - skipping "
-            "tests. To enable them, configure with "
-            "-DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake "
-            "(see README 'Tests'), or pass -DBUILD_TESTING=OFF to silence "
-            "this warning.")
-    endif()
+    find_package(GTest CONFIG REQUIRED)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_executable(equities_tests tests/config_test.cpp tests/json_test.cpp tests/market_data_test.cpp)
+    target_link_libraries(equities_tests PRIVATE equities_core GTest::gtest_main)
+    enable_warnings(equities_tests)
+    add_test(NAME equities_tests COMMAND equities_tests)
+    add_executable(history_probe tests/history_probe.cpp)
+    target_link_libraries(history_probe PRIVATE equities_core)
+    enable_warnings(history_probe)
+    add_test(NAME live_integration COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/live_integration.py $<TARGET_FILE:equities_cli> $<TARGET_FILE:history_probe>)
+    set_tests_properties(live_integration PROPERTIES TIMEOUT 60)
 endif()

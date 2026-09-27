@@ -140,4 +140,39 @@ namespace {
         EXPECT_EQ(defaultOutputName("cheap large caps!"), "cheap_large_caps__screened.csv");
     }
 
+    // ── FMP section parsing ──
+    TEST(ConfigParser, FmpSection) {
+        auto cfg = parseOk(
+            "[fmp]\n"
+            "api_key = test_key_123\n"
+            "sector = Technology\n"
+            "limit = 40\n"
+            "symbols = AAPL, MSFT, NVDA\n"
+            "[screen:tech_screen]\n"
+            "filter = PE:0:35\n",
+            "cfg_fmp.ini");
+        ASSERT_TRUE(cfg.has_value());
+        EXPECT_EQ(cfg->source, "fmp");
+        ASSERT_TRUE(cfg->fmp.has_value());
+        EXPECT_EQ(cfg->fmp->apiKey, "test_key_123");
+        EXPECT_EQ(cfg->fmp->sector, "Technology");
+        EXPECT_EQ(cfg->fmp->limit, 40u);
+        ASSERT_EQ(cfg->fmp->symbols.size(), 3u);
+        EXPECT_EQ(cfg->fmp->symbols[0], "AAPL");
+        EXPECT_EQ(cfg->fmp->symbols[1], "MSFT");
+        EXPECT_EQ(cfg->fmp->symbols[2], "NVDA");
+        ASSERT_EQ(cfg->screens.size(), 1u);
+        EXPECT_EQ(cfg->screens[0].name, "tech_screen");
+    }
+
 } // namespace
+
+TEST(AlpacaConfig, ParsesAndPreservesExplicitSource) {
+ auto cfg=parseOk("source = csv\n[alpaca]\nsymbols = AAPL, MSFT\ntimeout_ms = 250\nfeed = sip\n[screen:x]\n", "cfg_alpaca.ini");
+ ASSERT_TRUE(cfg); EXPECT_EQ(cfg->source,"csv"); ASSERT_TRUE(cfg->alpaca);
+ EXPECT_EQ(cfg->alpaca->symbols.size(),2); EXPECT_EQ(cfg->alpaca->options.timeoutMs,250);
+}
+TEST(AlpacaConfig, RejectsInvalidKeysAndTimeouts) {
+ for(auto line:{"timeout_ms = 0", "timeout_ms = -1", "timeout_ms = 1.5", "timeout_ms = 60001", "feed = bad", "typo = x", "symbols = AAPL\nsymbols = MSFT"})
+  EXPECT_TRUE(parseFails(std::string("source = alpaca\n[alpaca]\n")+line+"\n[screen:x]\n","cfg_alpaca_bad.ini"));
+}

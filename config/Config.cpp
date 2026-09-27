@@ -1,3 +1,4 @@
+#include <charconv>
 #include "Config.h"
 
 #include <charconv>
@@ -37,6 +38,14 @@ namespace Config {
             return out;
         }
 
+        std::string toLower(std::string_view sv) {
+            std::string out;
+            out.reserve(sv.size());
+            for (char c : sv)
+                out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return out;
+        }
+
         /// Parse a float from a string_view, consuming the ENTIRE input
         /// (no trailing garbage). Empty string → nullopt.
         auto parseFloatFull(std::string_view sv) noexcept -> std::optional<float> {
@@ -47,15 +56,24 @@ namespace Config {
             return val;
         }
 
-        /// Split a string_view on a delimiter into string_views (zero-copy).
-        auto splitFields(std::string_view text, char delim)
-            -> std::vector<std::string_view> {
-            return text
-                 | std::views::split(delim)
-                 | std::views::transform([](auto r) {
-                       return std::string_view{r.begin(), r.end()};
-                   })
-                 | std::ranges::to<std::vector<std::string_view>>();
+        auto splitFields(std::string_view input, char delimiter)
+    -> std::vector<std::string_view> {
+            std::vector<std::string_view> fields;
+
+            std::size_t start = 0;
+            while (start <= input.size()) {
+                const std::size_t separator = input.find(delimiter, start);
+
+                if (separator == std::string_view::npos) {
+                    fields.emplace_back(input.substr(start));
+                    break;
+                }
+
+                fields.emplace_back(input.substr(start, separator - start));
+                start = separator + 1;
+            }
+
+            return fields;
         }
 
         /// Parse a `filter = METRIC:MIN:MAX` value into a FilterRule.
@@ -180,9 +198,14 @@ namespace Config {
 
         AppConfig config;
         std::optional<ScreenConfig> current;   // engaged while inside a [screen:...]
+        bool inAlpaca = false;
+        std::set<std::string> seenInAlpaca;
+        bool inFmp = false;
+        bool seenFmp = false;
         std::set<std::string> seenScreens;     // lowercase screen names
         std::set<std::string> seenGlobal;      // lowercase global keys
         std::set<std::string> seenInScreen;    // scalar keys in the current screen
+        std::set<std::string> seenInFmp;       // scalar keys in [fmp]
 
         auto err = [&](size_t line, std::string_view message) {
             return std::unexpected(std::format("{}:{}: {}", filepath, line, message));
@@ -196,14 +219,40 @@ namespace Config {
             if (line.empty()) continue;
             if (line.front() == '#' || line.front() == ';') continue;  // whole-line comment
 
-            // ── section header: [screen:NAME] ──
+            // ── section header: [screen:NAME] or [fmp] ──
             if (line.front() == '[') {
                 if (line.back() != ']') {
                     return err(lineNum, std::format(
-                        "malformed section header \"{}\" (expected [screen:NAME])", line));
+                        "malformed section header \"{}\" (expected [screen:NAME] or [fmp])", line));
                 }
                 auto inner      = line.substr(1, line.size() - 2);
                 auto upperInner = toUpper(inner);
+
+                inAlpaca = false;
+                if (upperInner == "ALPACA") {
+                    if (config.alpaca) return err(lineNum, "duplicate [alpaca] section");
+                    if (current) { config.screens.push_back(std::move(*current)); current.reset(); }
+                    inAlpaca = true; inFmp = false;
+                    config.alpaca.emplace();
+                    continue;
+                }
+                if (upperInner == "FMP") {
+                    if (seenFmp) {
+                        return err(lineNum, "duplicate [fmp] section");
+                    }
+                    seenFmp = true;
+                    if (current) {
+                        config.screens.push_back(std::move(*current));
+                        current.reset();
+                    }
+                    inFmp = true;
+                    Config::FmpConfig fmpCfg;
+                    fmpCfg.enabled = true;
+                    config.fmp = std::move(fmpCfg);
+                    seenInFmp.clear();
+                    continue;
+                }
+
                 if (upperInner.size() < 7 || upperInner.substr(0, 7) != "SCREEN:") {
                     return err(lineNum, std::format(
                         "unknown section \"[{}]\" (expected [screen:NAME])", inner));
@@ -221,6 +270,7 @@ namespace Config {
                     config.screens.push_back(std::move(*current));
                     current.reset();
                 }
+                inFmp = false;
                 current       = ScreenConfig{std::string{name}, {}, std::nullopt, std::nullopt};
                 seenInScreen.clear();
                 continue;
@@ -238,15 +288,88 @@ namespace Config {
             auto upperKey = toUpper(key);
 
             // ── global scope (before any section) ──
-            if (!current) {
-                if (upperKey != "INPUT") {
+            if (inAlpaca) {
+                if (!seenInAlpaca.insert(upperKey).second) return err(lineNum, "duplicate [alpaca] key");
+                auto& cfg = *config.alpaca;
+                if (upperKey == "API_KEY") cfg.options.apiKey = value;
+                else if (upperKey == "SECRET_KEY") cfg.options.secretKey = value;
+                else if (upperKey == "BASE_URL") cfg.options.baseUrl = value;
+                else if (upperKey == "FEED") {
+                    if (value != "iex" && value != "sip") return err(lineNum, "feed must be iex or sip");
+                    cfg.options.feed = value;
+                } else if (upperKey == "TIMEOUT_MS") {
+                    long timeout=0;
+                    auto [p,e]=std::from_chars(value.data(),value.data()+value.size(),timeout);
+                    if (e!=std::errc{} || p!=value.data()+value.size() || timeout<1 || timeout>60000)
+                        return err(lineNum, "timeout_ms must be an integer in 1..60000");
+                    cfg.options.timeoutMs=timeout;
+                } else if (upperKey == "SYMBOLS") {
+                    for (auto sym : splitFields(value, ',')) {
+                        auto s=trim(sym);
+                        if (s.empty()) return err(lineNum, "empty Alpaca symbol");
+                        cfg.symbols.emplace_back(s);
+                    }
+                } else return err(lineNum, "unknown [alpaca] key");
+                continue;
+            }
+            if (!current && !inFmp) {
+                if (upperKey == "INPUT") {
+                    if (!seenGlobal.insert(upperKey).second) {
+                        return err(lineNum, "duplicate global key \"input\"");
+                    }
+                    config.inputFile = std::string{value};
+                    continue;
+                }
+                if (upperKey == "SOURCE") {
+                    if (!seenGlobal.insert(upperKey).second) {
+                        return err(lineNum, "duplicate global key \"source\"");
+                    }
+                    auto src = toLower(value);
+                    if (src != "csv" && src != "fmp" && src != "alpaca") {
+                        return err(lineNum, std::format("invalid source \"{}\" (expected 'csv', 'fmp', or 'alpaca')", value));
+                    }
+                    config.source = src;
+                    continue;
+                }
+                return err(lineNum, std::format(
+                    "unknown global key \"{}\" (only \"input\" and \"source\" are allowed before sections)", key));
+            }
+
+            // ── inside [fmp] section ──
+            if (inFmp) {
+                if (upperKey == "API_KEY") {
+                    if (!seenInFmp.insert(upperKey).second) {
+                        return err(lineNum, "duplicate \"api_key\" in [fmp]");
+                    }
+                    config.fmp->apiKey = std::string{value};
+                } else if (upperKey == "BASE_URL") {
+                    if (!seenInFmp.insert(upperKey).second) {
+                        return err(lineNum, "duplicate \"base_url\" in [fmp]");
+                    }
+                    config.fmp->baseUrl = std::string{value};
+                } else if (upperKey == "SECTOR") {
+                    if (!seenInFmp.insert(upperKey).second) {
+                        return err(lineNum, "duplicate \"sector\" in [fmp]");
+                    }
+                    config.fmp->sector = std::string{value};
+                } else if (upperKey == "LIMIT") {
+                    if (!seenInFmp.insert(upperKey).second) {
+                        return err(lineNum, "duplicate \"limit\" in [fmp]");
+                    }
+                    auto parsed = parseFloatFull(value);
+                    if (!parsed || *parsed <= 0.0f) {
+                        return err(lineNum, std::format("invalid limit \"{}\" in [fmp]", value));
+                    }
+                    config.fmp->limit = static_cast<std::size_t>(*parsed);
+                } else if (upperKey == "SYMBOLS") {
+                    for (auto sym : splitFields(value, ',')) {
+                        auto s = trim(sym);
+                        if (!s.empty()) config.fmp->symbols.emplace_back(s);
+                    }
+                } else {
                     return err(lineNum, std::format(
-                        "unknown global key \"{}\" (only \"input\" is allowed before sections)", key));
+                        "unknown key \"{}\" in [fmp] section", key));
                 }
-                if (!seenGlobal.insert(upperKey).second) {
-                    return err(lineNum, "duplicate global key \"input\"");
-                }
-                config.inputFile = std::string{value};
                 continue;
             }
 
@@ -281,6 +404,10 @@ namespace Config {
         if (config.screens.empty()) {
             return std::unexpected(std::format(
                 "{}: no [screen:...] sections found", filepath));
+        }
+
+        if (config.source.empty()) {
+            config.source = config.alpaca ? "alpaca" : ((config.fmp && config.fmp->enabled) ? "fmp" : "csv");
         }
 
         return config;

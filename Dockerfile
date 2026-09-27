@@ -12,8 +12,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         cmake \
         ninja-build \
+        python3 \
+        pkg-config \
         git \
         curl \
+        libcurl4-openssl-dev \
         zip \
         unzip \
         tar \
@@ -65,7 +68,7 @@ FROM builder AS test
 # stage too, so the gate also protects the shipped image. gtest must be
 # STATICALLY embedded in the test binary ("fat binary") - no dynamic gtest
 # libraries allowed.
-RUN ./build/equities_tests \
+RUN ctest --test-dir build --output-on-failure \
     && ! ldd ./build/equities_tests | grep -i gtest \
     && nm -C ./build/equities_tests | grep -q 'testing::Test' \
     && echo 'OK: gtest statically linked into equities_tests'
@@ -75,13 +78,19 @@ RUN ./build/equities_tests \
 # ------------------------------------------------------------
 FROM debian:trixie-slim AS runtime
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libcurl4 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Unprivileged by default;
 # user, so CSVs written into a bind-mounted directory stay editable on the host.
 RUN useradd --create-home --uid 1000 screener \
     && mkdir -p /work \
     && chown screener:screener /work
 
-COPY --from=builder /src/build/EquitiesScreener /usr/local/bin/EquitiesScreener
+COPY --from=test /src/build/EquitiesScreener /usr/local/bin/EquitiesScreener
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh
 
